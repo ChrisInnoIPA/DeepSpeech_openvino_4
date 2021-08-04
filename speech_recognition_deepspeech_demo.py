@@ -10,95 +10,30 @@ import time
 import wave
 import timeit
 import argparse
-
 import yaml
 import numpy as np
 from tqdm import tqdm
 from openvino.inference_engine import IECore
-
 from asr_utils.profiles import PROFILES
 from asr_utils.deep_speech_seq_pipeline import DeepSpeechSeqPipeline
-
 # from speech_recognition_deepspeech_demo import main
 import threading
 import datetime
 import sounddevice as sd
 from scipy.io.wavfile import write
-
 from pydub import AudioSegment
 import os
 import glob
+import keyboard
+import shutil
+from model.src.predict import OpenVINOPredictor
+from pprint import pprint
 
 indexx = 1
 t_num = 0
+oldfoldname = "audiocaut"
+newfoldname = "finalaudio"
 mutex = threading.Lock()
-
-def recod_5_time():
-    print('start=====>', datetime.datetime.now())
-        
-    global indexx
-    foldname = "audiocaut"
-
-    if os.path.exists(foldname):
-        print("folder OK")
-    else:
-        os.mkdir(foldname)
-        
-# while(True):
-    # mutex.acquire()
-    # filename = 'audiocaut'
-    # completeName = os.path.join(foldname, str(indexx) + '.wav')
-    fs=16000
-    duration = 3  # seconds
-    # print("test===>")
-    myrecording = sd.rec(duration * fs, samplerate=fs, channels=1, dtype=np.int16)
-    # real_5_time(myrecording)
-    completeName = os.path.join(foldname, str(indexx) + '.wav')
-    print("Recording Audio")
-    # sd.wait()
-    # print("Audio recording complete , Play Audio")
-    write(completeName, fs, myrecording) #save wav
-    
-    indexx += 1
-    # mutex.release()
-    
-    # print(myrecording, "myrecording=================>")
-
-    # sd.play(myrecording, fs)
-    # sd.wait()
-    # print("Play Audio Complete")
-    # print('2=====>')
-    main(myrecording, fs)
-    print('end=====>', datetime.datetime.now())
-        
-def audioappend():
-    
-    oldfoldname = "audiocaut"
-    newfoldname = "finalaudio"
-    
-    if os.path.exists(oldfoldname):
-        os.remove(oldfoldname)
-    else:
-        os.mkdir(newfoldname)
-        wavfile = []
-        for file in glob.glob("*.wav"):
-            wavfile.append(file)
-            
-    # sound1 = AudioSegment.from_file("1.wav", format="wav")
-    # sound2 = AudioSegment.from_file("2.wav", format="wav")
-    # sound3 = AudioSegment.from_file("3.wav", format="wav")
-    # sound4 = AudioSegment.from_file("4.wav", format="wav")
-    # sound5 = AudioSegment.from_file("5.wav", format="wav")
-
-    # # sound1 6 dB louder
-    # louder = sound1 + 6
-
-
-    # # sound1, with sound2 appended (use louder instead of sound1 to append the louder version)
-    # combined = sound1 + sound2 + sound3 + sound4 + sound5
-
-    # # simple export
-    # file_handle = combined.export("./new.wav", format="wav")
 
 def build_argparser():
     parser = argparse.ArgumentParser(description="Speech recognition DeepSpeech demo")
@@ -131,7 +66,63 @@ def build_argparser():
                         help="In simulated real-time mode, show this many characters on screen (default 79)")
     return parser
 
+def recod_5_time():
+    print('start=====>', datetime.datetime.now())
+        
+    global indexx
 
+    if os.path.exists(oldfoldname):
+        print("folder OK")
+    else:
+        os.mkdir(oldfoldname)
+        
+# while(True):
+    # mutex.acquire()
+    fs=16000
+    duration = 3  # seconds
+    # print("test===>")
+    myrecording = sd.rec(duration * fs, samplerate=fs, channels=1, dtype=np.int16)
+    # real_5_time(myrecording)
+    completeName = os.path.join(oldfoldname, str(indexx) + '.wav')
+    print("Recording Audio")
+    # sd.wait()
+    # print("Audio recording complete , Play Audio")
+    write(completeName, fs, myrecording) #save wav
+    
+    indexx += 1
+    # mutex.release()
+    
+    # print(myrecording, "myrecording=================>")
+
+    # sd.play(myrecording, fs)
+    # sd.wait()
+    # print("Play Audio Complete")
+    # print('2=====>')
+    main(myrecording, fs)
+    print('end=====>', datetime.datetime.now())
+
+def appendcutaud():
+    # os.mkdir(newfoldname)
+    base_files = os.listdir(oldfoldname)
+    base_files.sort(key=lambda x: int(x.split('.')[0]))
+    combined = 0
+    
+    for path in base_files:
+        full_file = os.path.join(path)
+        # print(full_file)
+        sound = AudioSegment.from_file(oldfoldname + "/" + full_file, format="wav")
+        combined += sound
+        combined.export(newfoldname + "/new.wav", format="wav")
+        
+def runappendaud():
+    if os.path.isdir(newfoldname) is not True:
+        os.mkdir(newfoldname)
+        appendcutaud()
+        shutil.rmtree(oldfoldname)
+    else:
+        appendcutaud()
+        shutil.rmtree(oldfoldname)
+        
 def get_profile(profile_name):
     if profile_name in PROFILES:
         return PROFILES[profile_name]
@@ -139,8 +130,25 @@ def get_profile(profile_name):
         profile = yaml.safe_load(f)
     return profile
 
+def speakerclu():
+    newaud = newfoldname + "/new.wav"
+    speakmod = OpenVINOPredictor('./model/openvino/diarization.xml', './model/openvino/diarization.bin', './model/configs.pth', 45, 3)
+    timestamps, speakers = speakmod.predict(newaud, plot=True) #plot output cluster picture
+    # result = [{"timestamp": timestamp.round(2), "speaker_id": speaker} for timestamp, speaker in zip(timestamps, speakers)] #透過round() 將timestamps進行四捨五入 透過zip 將timestamps 與 speakers 進行矩陣的行列互換
+    # pprint(result)
+    # smartspeakers = '-i' + newaud + '--xml ./model/openvino/diarization.xml --bin ./model/openvino/diarization.bin --config ./model/configs.pth'
+    
+    sp = "".join(str(v) for v in speakers)
+    spindex = 0
+    
+    mylog = open("./speakerclu.log", "a+")
+    
+    for whoare in sp:
+        print(spindex, "index===================>\n")
+        print(whoare[spindex], "index===================>\n")
+        mylog.write(whoare[spindex])
 
-def main(myrecording, fs):
+def main(myrecording, fs):    
     args = build_argparser().parse_args()
     profile = get_profile(args.profile)
     if args.block_size is None:
@@ -159,7 +167,7 @@ def main(myrecording, fs):
         online_decoding = args.realtime,
     )
     print("Loading, including network weights, IE initialization, LM, building LM vocabulary trie: {} s".format(timeit.default_timer() - start_load_time))
-
+    
     start_proc_time = timeit.default_timer()
     # with wave.open(args.input, 'rb') as wave_read:
     #     channel_num, sample_width, sampling_rate, pcm_length, compression_type, _ = wave_read.getparams()
@@ -213,19 +221,24 @@ def main(myrecording, fs):
         mylog.write(candidate.text)
         mylog.write("\n")
         print("{}\t{}".format(candidate.conf, candidate.text))
-        
-    audioappend()
 
 while(True):
     print("==================>")
+    if keyboard.is_pressed('p'):  #Presses and holds down a hotkey
+        print("pass")
+        break
+    print("no press key")
     reco = threading.Thread(name='recod_5_time', target = recod_5_time)
     # real = threading.Thread(name='real_5_time', target = real_5_time)
     reco.start()
-    # print('1=====>')
     time.sleep(3)
     # real.start()
     # time.sleep(5)
     # t.join()
+
+
+runappendaud()
+speakerclu()
     
 if __name__ == '__main__':
     main()
